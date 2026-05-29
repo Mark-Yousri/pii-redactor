@@ -32,8 +32,24 @@ _ARABIC_LABELS = {
     "الاسم", "القومي", "الرقم", "الميلاد", "تاريخ", "العنوان",
     "الجنس", "الجنسية", "محافظة", "الديانة", "المهنة",
     # reversed forms Tesseract may produce
+    # reversed forms Tesseract may produce
     "مسلاا", "يمقلا", "مقرلا", "داليملا", "خيرات", "ناونعلا",
+    # Egyptian NID government header — not PII
+    "جمهورية", "مصر", "العربية", "بطاقة", "تحقيق", "الشخصية",
+    "المصرية", "عربية", "جمهوريه",
+    # reversed header words Tesseract may produce
+    "ةيروهمج", "رصم", "ةيبرعلا", "ةقاطب", "قيقحت", "ةيصخشلا",
 }
+
+
+def _contains_arabic(s: str) -> bool:
+    return bool(re.search(r"[؀-ۿ]", s))
+
+
+def _is_header_only(t: str) -> bool:
+    """True if every Arabic word in the token is a known non-PII label/header."""
+    arabic_words = [w for w in t.split() if _contains_arabic(w)]
+    return all(w in _ARABIC_LABELS for w in arabic_words) if arabic_words else False
 
 
 def tier1_classify(token: str) -> str | None:
@@ -46,8 +62,13 @@ def tier1_classify(token: str) -> str | None:
             if re.fullmatch(pat, t):
                 return label
 
-    # Pure Arabic-script token that isn't a field label → treat as NAME
-    # (on an ID card, Arabic text is almost always a name, address, or birthplace)
+    # Line-level token (contains spaces + Arabic) — skip if it's all header words
+    if " " in t and _contains_arabic(t):
+        if _is_header_only(t):
+            return None
+        return "NAME"  # Arabic line with at least one non-label word → PII
+
+    # Single pure Arabic-script token that isn't a field label → NAME
     if _ARABIC_RE.match(t) and t not in _ARABIC_LABELS and len(t) >= 2:
         return "NAME"
 
