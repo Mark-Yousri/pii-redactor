@@ -4,7 +4,7 @@ import tempfile
 
 OLLAMA_BASE_URL = "http://localhost:11434"
 OLLAMA_MODEL = "gemma4:e2b"
-FACE_DET_THRESHOLD = 0.5
+FACE_DET_THRESHOLD = 0.3  # lower threshold catches small/angled NID card faces
 FACE_MODEL_NAME = "buffalo_sc"
 MAX_FILE_SIZE_MB = 50
 TEMP_DIR = os.path.join(tempfile.gettempdir(), "pii_redactor")

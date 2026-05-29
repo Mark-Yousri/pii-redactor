@@ -9,13 +9,17 @@ from backend.detect.text_extractor import TextToken
 
 PATTERNS = {
     "ID_NUMBER": [
-        r"\b\d{14}\b",
-        r"\b[A-Z]{1,2}\d{6,9}\b",
-        r"\b\d{9}\b",
+        r"\b\d{14}\b",                          # Egyptian NID (Western digits)
+        r"[٠-٩]{14}",                 # Egyptian NID (Arabic-Indic digits)
+        r"\b[A-Z]{1,2}\d{6,9}\b",              # Passport-style
+        r"\b\d{9}\b",                           # Generic 9-digit
+        r"[٠-٩\d]{7,9}",             # Mixed/short passport numbers
     ],
     "DATE": [
         r"\b\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}\b",
         r"\b\d{4}[\/\-]\d{2}[\/\-]\d{2}\b",
+        r"[٠-٩]{4}[\/\-][٠-٩]{2}[\/\-][٠-٩]{2}",
+        r"[٠-٩]{4}[\/\-][٠-٩]{1,2}",  # partial Arabic date (٢٠٠١/٠٧)
         r"\b(0[1-9]|[12]\d|3[01])\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\w*\s+\d{4}\b",
     ],
 }
@@ -35,15 +39,17 @@ _ARABIC_LABELS = {
 def tier1_classify(token: str) -> str | None:
     t = token.strip()
 
-    # Pure Arabic-script token that isn't a field label → treat as NAME
-    # (on an ID card, Arabic text is almost always a name, address, or birthplace)
-    if _ARABIC_RE.match(t) and t not in _ARABIC_LABELS and len(t) >= 2:
-        return "NAME"
-
+    # Numeric patterns first — Arabic-Indic digits sit inside Arabic Unicode range
+    # so they must be checked before the Arabic-name heuristic below
     for label, pats in PATTERNS.items():
         for pat in pats:
             if re.fullmatch(pat, t):
                 return label
+
+    # Pure Arabic-script token that isn't a field label → treat as NAME
+    # (on an ID card, Arabic text is almost always a name, address, or birthplace)
+    if _ARABIC_RE.match(t) and t not in _ARABIC_LABELS and len(t) >= 2:
+        return "NAME"
 
     return None
 
