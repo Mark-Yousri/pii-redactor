@@ -1,5 +1,9 @@
 CLAUDE.md
 
+# ML model files (downloaded at runtime)
+*.tflite
+*.onnx
+
 # Python
 __pycache__/
 *.py[cod]
