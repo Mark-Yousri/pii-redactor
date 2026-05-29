@@ -33,33 +33,32 @@ class TextToken:
 
 def _find_card_bbox(image: np.ndarray) -> tuple | None:
     """
-    Locate the card/document inside the image by removing background.
+    Locate the card/document inside the image.
 
-    Strategy A — color: mask out green + dark pixels, find the largest
-    remaining blob.  Works well for NIDs photographed on a green surface.
-
-    Strategy B — morphological: if color segmentation yields nothing large
-    enough, fall back to finding the biggest solid-bordered rectangle via
-    edge dilation + bounding-rect.
+    Egyptian NIDs are often photographed on a green background. The card
+    itself has a beige/cream data area PLUS a darker brown/gold arabesque
+    header area. The green mask only catches the lighter data area, so we
+    extend the detected region upward by 60% of its height to recover the
+    header + name fields.
 
     Returns (x, y, w, h) in original pixels or None.
     """
     h, w = image.shape[:2]
-    min_area = w * h * 0.06   # card must be at least 6% of frame
+    min_area = w * h * 0.04
 
-    # ── Strategy A: color segmentation ───────────────────────────────────────
+    # ── Strategy A: green background removal ─────────────────────────────────
     hsv = cv2.cvtColor(image, cv2.COLOR_RGB2HSV)
 
-    # Green background (covers both bright and dark greens)
-    g1 = cv2.inRange(hsv, np.array([35, 30, 20]),  np.array([95, 255, 255]))
-    # Dark ceiling / shadows
-    dk = cv2.inRange(hsv, np.array([0,  0,  0]),   np.array([180, 255, 55]))
-    bg = cv2.bitwise_or(g1, dk)
+    # Tight green mask: must be clearly green-hued and saturated.
+    # Avoids eating the card's brownish-gold arabesque (H~15-35, S low-mid).
+    green = cv2.inRange(hsv, np.array([38, 50, 30]), np.array([92, 255, 255]))
+    # Very dark pixels (ceiling, deep shadows)
+    dark  = cv2.inRange(hsv, np.array([0,  0,  0]),  np.array([180, 255, 45]))
+    bg    = cv2.bitwise_or(green, dark)
     card_mask = cv2.bitwise_not(bg)
 
-    # Close small holes, remove specks
-    k_close = cv2.getStructuringElement(cv2.MORPH_RECT, (20, 20))
-    k_open  = cv2.getStructuringElement(cv2.MORPH_RECT, (10, 10))
+    k_close = cv2.getStructuringElement(cv2.MORPH_RECT, (18, 18))
+    k_open  = cv2.getStructuringElement(cv2.MORPH_RECT, (8,  8))
     card_mask = cv2.morphologyEx(card_mask, cv2.MORPH_CLOSE, k_close)
     card_mask = cv2.morphologyEx(card_mask, cv2.MORPH_OPEN,  k_open)
 
@@ -68,16 +67,25 @@ def _find_card_bbox(image: np.ndarray) -> tuple | None:
         largest = max(cnts, key=cv2.contourArea)
         if cv2.contourArea(largest) >= min_area:
             x, y, cw, ch = cv2.boundingRect(largest)
-            # Add a small margin
-            pad = 4
-            x  = max(0, x - pad);  y  = max(0, y - pad)
-            cw = min(w - x, cw + 2*pad);  ch = min(h - y, ch + 2*pad)
-            return x, y, cw, ch
 
-    # ── Strategy B: morphological (dark-border rectangle) ────────────────────
-    gray   = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
-    edged  = cv2.Canny(cv2.GaussianBlur(gray, (5,5), 0), 30, 100)
-    k_dil  = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
+            # The green mask only finds the lighter card area (data fields).
+            # Extend upward by 60% of detected height to capture the darker
+            # arabesque header + name fields that sit above the data section.
+            extend_up = int(ch * 0.60)
+            y_new  = max(0, y - extend_up)
+            ch_new = min(h - y_new, ch + extend_up)
+
+            # Clamp width with a small padding
+            pad = 6
+            x_new  = max(0, x - pad)
+            cw_new = min(w - x_new, cw + 2 * pad)
+
+            return x_new, y_new, cw_new, ch_new
+
+    # ── Strategy B: morphological fallback ───────────────────────────────────
+    gray    = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+    edged   = cv2.Canny(cv2.GaussianBlur(gray, (5, 5), 0), 30, 100)
+    k_dil   = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
     dilated = cv2.dilate(edged, k_dil, iterations=4)
 
     cnts, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
