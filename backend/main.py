@@ -36,6 +36,34 @@ async def root():
     return FileResponse(os.path.join(_STATIC_DIR, "index.html"))
 
 
+@app.post("/debug/ocr")
+async def debug_ocr(file: UploadFile = File(...)):
+    """Debug endpoint: shows what OCR detects after card detection + warp."""
+    import io
+    from PIL import Image as PILImage
+    from backend.detect.text_extractor import (
+        extract_tokens_ocr, _find_document_corners, _warp_card
+    )
+
+    content = await file.read()
+    pil_img = PILImage.open(io.BytesIO(content)).convert("RGB")
+    img_arr = np.array(pil_img)
+    h, w = img_arr.shape[:2]
+
+    corners = _find_document_corners(img_arr)
+    card_detected = corners is not None
+
+    tokens = extract_tokens_ocr(img_arr, page_num=0, dpi=150)
+
+    return {
+        "original_size": [w, h],
+        "card_detected": card_detected,
+        "corners": corners.tolist() if corners is not None else None,
+        "total_tokens": len(tokens),
+        "tokens": [{"text": t.text, "bbox": list(t.bbox)} for t in tokens],
+    }
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173"],
