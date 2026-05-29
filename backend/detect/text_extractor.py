@@ -129,9 +129,10 @@ def _make_tokens(data: dict, page_num: int, pdf_scale: float,
       Tesseract px → ÷ ocr_scale → original crop px → + crop offset → original image px
       → × pdf_scale → PDF points
     """
+    _ctrl = re.compile(r"[​-‏‪-‮⁦-⁩﻿­]+")
     word_tokens = []
     for i, text in enumerate(data["text"]):
-        text = text.strip()
+        text = _ctrl.sub("", text).strip()
         if not text or int(data["conf"][i]) < 20:
             continue
         left = data["left"][i];  top = data["top"][i]
@@ -145,13 +146,14 @@ def _make_tokens(data: dict, page_num: int, pdf_scale: float,
                                      page_num=page_num, source="ocr"))
 
     # Line-level bboxes for Arabic text
+    _ctrl = re.compile(r"[​-‏‪-‮⁦-⁩﻿­]+")
     lines: dict[tuple, dict] = {}
     for i, text in enumerate(data["text"]):
         if int(data["conf"][i]) < 10:
             continue
         key = (data["block_num"][i], data["par_num"][i], data["line_num"][i])
         r = lines.setdefault(key, {"texts": [], "L": [], "T": [], "R": [], "B": []})
-        r["texts"].append(text)
+        r["texts"].append(_ctrl.sub("", text))
         l = data["left"][i];  t = data["top"][i]
         r["L"].append(l);  r["T"].append(t)
         r["R"].append(l + data["width"][i]);  r["B"].append(t + data["height"][i])

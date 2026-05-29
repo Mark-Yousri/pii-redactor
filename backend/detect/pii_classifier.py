@@ -7,6 +7,15 @@ import httpx
 import backend.config as config
 from backend.detect.text_extractor import TextToken
 
+# Unicode directional / zero-width marks that Tesseract appends to Arabic tokens.
+# These break regex matching on Arabic Unicode ranges.
+_CTRL_RE = re.compile(r"[​-‏‪-‮⁦-⁩﻿­]+")
+
+
+def _clean(text: str) -> str:
+    """Strip invisible Unicode control characters, then strip whitespace."""
+    return _CTRL_RE.sub("", text).strip()
+
 PATTERNS = {
     "ID_NUMBER": [
         r"\b\d{14}\b",                          # Egyptian NID (Western digits)
@@ -48,12 +57,15 @@ def _contains_arabic(s: str) -> bool:
 
 def _is_header_only(t: str) -> bool:
     """True if every Arabic word in the token is a known non-PII label/header."""
-    arabic_words = [w for w in t.split() if _contains_arabic(w)]
+    arabic_words = [_clean(w) for w in t.split() if _contains_arabic(w)]
     return all(w in _ARABIC_LABELS for w in arabic_words) if arabic_words else False
 
 
 def tier1_classify(token: str) -> str | None:
-    t = token.strip()
+    # Strip Unicode directional marks that Tesseract appends to Arabic tokens
+    t = _clean(token)
+    if not t:
+        return None
 
     # Numeric patterns first — Arabic-Indic digits sit inside Arabic Unicode range
     # so they must be checked before the Arabic-name heuristic below
