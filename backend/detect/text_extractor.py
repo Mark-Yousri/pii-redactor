@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import os
 
 import numpy as np
 import pytesseract
@@ -8,6 +9,13 @@ import backend.config as config
 from backend.utils.pdf_utils import is_born_digital, rasterize_page, get_page_count
 
 pytesseract.pytesseract.tesseract_cmd = config.TESSERACT_CMD
+
+
+def _ocr_lang() -> str:
+    """Return the best available language string for Tesseract."""
+    tessdata = os.path.join(os.path.dirname(config.TESSERACT_CMD), "tessdata")
+    has_arabic = os.path.exists(os.path.join(tessdata, "ara.traineddata"))
+    return "ara+eng" if has_arabic else "eng"
 
 
 @dataclass
@@ -37,15 +45,23 @@ def extract_tokens_digital(pdf_path: str) -> list:
 
 
 def extract_tokens_ocr(image: np.ndarray, page_num: int, dpi: int = 200) -> list:
-    data = pytesseract.image_to_data(image, output_type=pytesseract.Output.DICT)
+    lang = _ocr_lang()
+    # PSM 3 = fully automatic page segmentation (default), works well for IDs
+    config_str = f"--psm 3 --oem 1"
+    data = pytesseract.image_to_data(
+        image,
+        lang=lang,
+        config=config_str,
+        output_type=pytesseract.Output.DICT,
+    )
     tokens = []
-    scale = 72.0 / dpi  # convert pixel coords → PDF points
+    scale = 72.0 / dpi  # pixel coords → PDF points
     for i, text in enumerate(data["text"]):
         text = text.strip()
         if not text:
             continue
         conf = int(data["conf"][i])
-        if conf < 40:
+        if conf < 30:  # slightly lower threshold to catch Arabic script
             continue
         x = data["left"][i] * scale
         y = data["top"][i] * scale

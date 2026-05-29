@@ -20,21 +20,43 @@ PATTERNS = {
     ],
 }
 
+# Arabic Unicode block: U+0600–U+06FF (covers Arabic letters, including reversed OCR output)
+_ARABIC_RE = re.compile(r"^[؀-ۿݐ-ݿࢠ-ࣿ]+$")
+
+# Known Arabic NID field labels — these are structural words, not PII
+_ARABIC_LABELS = {
+    "الاسم", "القومي", "الرقم", "الميلاد", "تاريخ", "العنوان",
+    "الجنس", "الجنسية", "محافظة", "الديانة", "المهنة",
+    # reversed forms Tesseract may produce
+    "مسلاا", "يمقلا", "مقرلا", "داليملا", "خيرات", "ناونعلا",
+}
+
 
 def tier1_classify(token: str) -> str | None:
+    t = token.strip()
+
+    # Pure Arabic-script token that isn't a field label → treat as NAME
+    # (on an ID card, Arabic text is almost always a name, address, or birthplace)
+    if _ARABIC_RE.match(t) and t not in _ARABIC_LABELS and len(t) >= 2:
+        return "NAME"
+
     for label, pats in PATTERNS.items():
         for pat in pats:
-            if re.fullmatch(pat, token.strip()):
+            if re.fullmatch(pat, t):
                 return label
+
     return None
 
 
 async def tier2_classify_batch(tokens: list[str]) -> list[str]:
     prompt = (
-        "You are a PII classifier. Classify each token as exactly one of: NAME, ADDRESS, OTHER.\n"
+        "You are a PII classifier. Tokens may be in Arabic or English.\n"
+        "Classify each token as exactly one of: NAME, ADDRESS, OTHER.\n"
+        "NAME includes Arabic and English personal names (e.g. محمد، علي، Hassan).\n"
+        "ADDRESS includes cities, streets, governorates in any language.\n"
         "Respond ONLY with a JSON array of labels in the same order as the input.\n"
-        "No explanation. No markdown.\n\n"
-        f"Tokens: {json.dumps(tokens)}\n"
+        "No explanation. No markdown. No extra text.\n\n"
+        f"Tokens: {json.dumps(tokens, ensure_ascii=False)}\n"
         "Response:"
     )
     try:
