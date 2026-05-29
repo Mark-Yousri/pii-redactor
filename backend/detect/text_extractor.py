@@ -208,11 +208,27 @@ def extract_tokens_ocr(image: np.ndarray, page_num: int, dpi: int = 200) -> list
     bbox = _find_card_bbox(image)
     if bbox is not None:
         card, cx, cy, card_scale = _crop_and_enhance(image, bbox, target_width=2000)
-        data = pytesseract.image_to_data(
-            card, lang=lang, config="--psm 6 --oem 1",
-            output_type=pytesseract.Output.DICT,
-        )
-        tokens = _make_tokens(data, page_num, pdf_scale, card_scale, cx, cy)
+
+        # Two OCR passes: PSM 6 (uniform block) catches dense text regions;
+        # PSM 11 (sparse text) catches isolated words like short names that
+        # the block segmenter misses. Merge by deduplicating on bbox.
+        all_tokens: list[TextToken] = []
+        for psm in ("6", "11"):
+            data = pytesseract.image_to_data(
+                card, lang=lang, config=f"--psm {psm} --oem 1",
+                output_type=pytesseract.Output.DICT,
+            )
+            all_tokens.extend(_make_tokens(data, page_num, pdf_scale, card_scale, cx, cy))
+
+        # Deduplicate: keep one token per unique (text, rounded-bbox) pair
+        seen: set[tuple] = set()
+        tokens: list[TextToken] = []
+        for t in all_tokens:
+            key = (t.text, round(t.bbox[0]), round(t.bbox[1]))
+            if key not in seen:
+                seen.add(key)
+                tokens.append(t)
+
         if len(tokens) >= 3:
             return tokens
 
