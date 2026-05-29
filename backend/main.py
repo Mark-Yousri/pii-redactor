@@ -143,26 +143,55 @@ async def redact_endpoint(
                 redact_scanned_pdf(input_path, classified, face_detections, enabled, output_path)
 
         else:
-            # Image — face detection only for now
-            from PIL import Image as PILImage
+            # Image — OCR text extraction + face detection
             import io
+            from PIL import Image as PILImage
+            from backend.detect.text_extractor import extract_tokens_ocr
+
             pil_img = PILImage.open(io.BytesIO(content)).convert("RGB")
             img_arr = np.array(pil_img)
 
+            # OCR text tokens from the image
+            ocr_tokens = extract_tokens_ocr(img_arr, page_num=0, dpi=150)
+            classified = await classify_tokens(ocr_tokens)
+
+            for ct in classified:
+                if ct.label == "NAME" and "name" in enabled:
+                    summary["names"] += 1
+                elif ct.label == "ID_NUMBER" and "id_number" in enabled:
+                    summary["id_numbers"] += 1
+                elif ct.label == "DATE" and "date" in enabled:
+                    summary["dates"] += 1
+                elif ct.label == "ADDRESS" and "address" in enabled:
+                    summary["addresses"] += 1
+
+            # Face detection
             face_detections = []
             if "face" in enabled:
                 face_detections = detect_faces(img_arr, page_num=0)
                 summary["faces"] = len(face_detections)
 
-            boxes = [fd.bbox for fd in face_detections]
+            # Collect pixel-space boxes — OCR bboxes are in PDF-point space (scaled by 72/dpi),
+            # so convert back to pixels for the image redactor
+            scale = 150 / 72.0
+            _lbl_map = {"NAME": "name", "ID_NUMBER": "id_number", "DATE": "date", "ADDRESS": "address"}
+            boxes = []
+            for ct in classified:
+                pii_type = _lbl_map.get(ct.label)
+                if pii_type and pii_type in enabled:
+                    x0, y0, x1, y1 = ct.token.bbox
+                    boxes.append((x0 * scale, y0 * scale, x1 * scale, y1 * scale))
+            for fd in face_detections:
+                boxes.append(fd.bbox)
+
             redacted_arr = redact_image(img_arr, boxes, mode=redact_mode)
 
-            # Wrap image in a single-page PDF for uniform download
+            # Wrap redacted image in a single-page PDF for uniform download
             h, w = redacted_arr.shape[:2]
             doc = fitz.open()
-            page = doc.new_page(width=w, height=h)
+            pg = doc.new_page(width=w, height=h)
             pix = fitz.Pixmap(fitz.csRGB, w, h, redacted_arr.tobytes(), False)
-            page.insert_image(page.rect, pixmap=pix)
+            pg.insert_image(pg.rect, pixmap=pix)
             doc.save(output_path, garbage=4, deflate=True)
             doc.close()
 
@@ -174,7 +203,7 @@ async def redact_endpoint(
 
         # --- Verification: check redacted strings are gone ---
         redacted_strings = []
-        for ct in (classified if ext == "pdf" else []):
+        for ct in classified:
             lbl = ct.label
             tp = {"NAME": "name", "ID_NUMBER": "id_number", "DATE": "date", "ADDRESS": "address"}.get(lbl)
             if tp and tp in enabled:

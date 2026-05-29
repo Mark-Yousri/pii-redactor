@@ -4,7 +4,10 @@ import numpy as np
 import pytesseract
 
 import fitz
+import backend.config as config
 from backend.utils.pdf_utils import is_born_digital, rasterize_page, get_page_count
+
+pytesseract.pytesseract.tesseract_cmd = config.TESSERACT_CMD
 
 
 @dataclass

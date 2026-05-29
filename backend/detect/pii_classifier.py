@@ -41,11 +41,17 @@ async def tier2_classify_batch(tokens: list[str]) -> list[str]:
         async with httpx.AsyncClient(timeout=30.0) as client:
             r = await client.post(
                 f"{config.OLLAMA_BASE_URL}/api/generate",
-                json={"model": config.OLLAMA_MODEL, "prompt": prompt, "stream": False},
+                json={"model": config.OLLAMA_MODEL, "prompt": prompt, "stream": False, "think": False},
             )
             r.raise_for_status()
             raw = r.json().get("response", "")
-            labels = json.loads(raw.strip())
+            # Strip <think>...</think> blocks emitted by reasoning models
+            raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
+            # Extract first JSON array in the response
+            m = re.search(r"\[.*?\]", raw, re.DOTALL)
+            if not m:
+                raise ValueError("No JSON array in response")
+            labels = json.loads(m.group())
             if isinstance(labels, list) and len(labels) == len(tokens):
                 return [str(l).upper() for l in labels]
     except Exception:
