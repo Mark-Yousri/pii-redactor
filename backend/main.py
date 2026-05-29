@@ -9,7 +9,8 @@ import httpx
 import numpy as np
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
 
 import backend.config as config
 from backend.detect.face import detect_faces
@@ -25,6 +26,15 @@ from backend.utils.pdf_utils import (
 )
 
 app = FastAPI(title="PII Redactor")
+
+_STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
+app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
+
+
+@app.get("/", response_class=HTMLResponse)
+async def root():
+    return FileResponse(os.path.join(_STATIC_DIR, "index.html"))
+
 
 app.add_middleware(
     CORSMiddleware,

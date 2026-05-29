@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PII Redactor</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>tailwind.config = { darkMode: 'class' }</script>
+  <style>
+    body { background: #030712; }
+    .skeleton { background: linear-gradient(90deg, #1f2937 25%, #374151 50%, #1f2937 75%);
+      background-size: 200% 100%; animation: shimmer 1.5s infinite; }
+    @keyframes shimmer { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
+  </style>
+</head>
+<body class="text-gray-100 min-h-screen">
+<div class="max-w-5xl mx-auto px-6 py-10 space-y-6">
+
+  <!-- Header -->
+  <div>
+    <h1 class="text-2xl font-bold tracking-tight">PII Redactor</h1>
+    <p class="text-sm text-gray-500 mt-1">True redaction — underlying text is removed, not painted over.</p>
+  </div>
+
+  <!-- Drop Zone -->
+  <div id="dropzone"
+    class="cursor-pointer rounded-xl border-2 border-dashed border-gray-700 p-10 text-center transition-colors hover:border-gray-500"
+    onclick="document.getElementById('fileInput').click()"
+  >
+    <input id="fileInput" type="file" accept=".pdf,.jpg,.jpeg,.png" class="hidden" />
+    <p class="text-lg text-gray-300">Drop a PDF or image here</p>
+    <p class="mt-1 text-sm text-gray-500">PDF, JPG, PNG — max 50 MB</p>
+    <p id="fileLabel" class="mt-3 text-sm text-blue-400 hidden"></p>
+    <p id="dropError" class="mt-3 text-sm text-red-400 hidden"></p>
+  </div>
+
+  <!-- Toggles -->
+  <div class="space-y-3">
+    <div class="flex flex-wrap gap-2" id="toggleContainer"></div>
+    <div class="flex items-center gap-3 text-sm">
+      <span class="text-gray-400">Redact style:</span>
+      <button id="modeBlur" onclick="setMode('blur')"
+        class="rounded px-3 py-1 bg-gray-600 text-white transition-colors">Blur</button>
+      <button id="modeBox" onclick="setMode('box')"
+        class="rounded px-3 py-1 bg-gray-800 text-gray-400 hover:bg-gray-700 transition-colors">Box</button>
+    </div>
+  </div>
+
+  <!-- Redact Button -->
+  <button id="redactBtn" onclick="runRedact()"
+    class="rounded-lg bg-blue-600 px-6 py-2.5 text-sm font-semibold text-white hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+    disabled>
+    Redact
+  </button>
+
+  <!-- Error -->
+  <p id="apiError" class="text-sm text-red-400 hidden"></p>
+
+  <!-- Summary -->
+  <div id="summary" class="hidden space-y-1">
+    <p id="summaryText" class="text-sm text-gray-300"></p>
+    <p id="verifyText" class="text-sm font-medium"></p>
+  </div>
+
+  <!-- Preview -->
+  <div class="grid grid-cols-2 gap-4">
+    <div>
+      <p class="mb-2 text-xs uppercase tracking-widest text-gray-500">Original</p>
+      <div id="originalPane"
+        class="w-full rounded-lg border border-gray-700 bg-gray-900 flex items-center justify-center text-gray-600 text-sm"
+        style="min-height:200px">
+        Upload a file
+      </div>
+    </div>
+    <div>
+      <p class="mb-2 text-xs uppercase tracking-widest text-gray-500">Redacted</p>
+      <div id="redactedPane"
+        class="w-full rounded-lg border border-dashed border-gray-700 bg-gray-900 flex items-center justify-center text-gray-600 text-sm"
+        style="min-height:200px">
+        Result appears here
+      </div>
+    </div>
+  </div>
+
+  <!-- Page nav -->
+  <div id="pageNav" class="hidden flex justify-center items-center gap-4 text-sm text-gray-400">
+    <button onclick="changePage(-1)" class="hover:text-white disabled:opacity-30" id="prevBtn">‹ Prev</button>
+    <span id="pageLabel"></span>
+    <button onclick="changePage(1)" class="hover:text-white disabled:opacity-30" id="nextBtn">Next ›</button>
+  </div>
+
+  <!-- Download -->
+  <a id="downloadBtn" href="#" download="redacted.pdf"
+    class="hidden inline-block rounded-lg bg-gray-700 px-6 py-2.5 text-sm font-semibold text-white hover:bg-gray-600 transition-colors">
+    Download Redacted PDF
+  </a>
+
+</div>
+
+<script>
+  const PII_TYPES = [
+    { key: 'face',      label: 'Faces' },
+    { key: 'name',      label: 'Names' },
+    { key: 'id_number', label: 'ID Numbers' },
+    { key: 'date',      label: 'Dates' },
+    { key: 'address',   label: 'Addresses' },
+  ];
+
+  let selectedFile = null;
+  let enabledTypes = PII_TYPES.map(t => t.key);
+  let redactMode = 'blur';
+  let redactedPages = [];
+  let originalPages = [];
+  let currentPage = 0;
+  let fileId = null;
+
+  // Build toggle buttons
+  const container = document.getElementById('toggleContainer');
+  PII_TYPES.forEach(({ key, label }) => {
+    const btn = document.createElement('button');
+    btn.id = 'toggle_' + key;
+    btn.textContent = label;
+    btn.onclick = () => toggleType(key);
+    btn.className = 'rounded-full px-4 py-1.5 text-sm font-medium transition-colors bg-blue-600 text-white';
+    container.appendChild(btn);
+  });
+
+  function toggleType(key) {
+    if (enabledTypes.includes(key)) {
+      enabledTypes = enabledTypes.filter(t => t !== key);
+    } else {
+      enabledTypes.push(key);
+    }
+    const btn = document.getElementById('toggle_' + key);
+    btn.className = enabledTypes.includes(key)
+      ? 'rounded-full px-4 py-1.5 text-sm font-medium transition-colors bg-blue-600 text-white'
+      : 'rounded-full px-4 py-1.5 text-sm font-medium transition-colors bg-gray-800 text-gray-400 hover:bg-gray-700';
+  }
+
+  function setMode(m) {
+    redactMode = m;
+    document.getElementById('modeBlur').className = m === 'blur'
+      ? 'rounded px-3 py-1 bg-gray-600 text-white transition-colors'
+      : 'rounded px-3 py-1 bg-gray-800 text-gray-400 hover:bg-gray-700 transition-colors';
+    document.getElementById('modeBox').className = m === 'box'
+      ? 'rounded px-3 py-1 bg-gray-600 text-white transition-colors'
+      : 'rounded px-3 py-1 bg-gray-800 text-gray-400 hover:bg-gray-700 transition-colors';
+  }
+
+  // Drag and drop
+  const dz = document.getElementById('dropzone');
+  dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('border-blue-500'); });
+  dz.addEventListener('dragleave', () => dz.classList.remove('border-blue-500'));
+  dz.addEventListener('drop', e => {
+    e.preventDefault();
+    dz.classList.remove('border-blue-500');
+    const f = e.dataTransfer.files[0];
+    if (f) handleFile(f);
+  });
+  document.getElementById('fileInput').addEventListener('change', e => {
+    if (e.target.files[0]) handleFile(e.target.files[0]);
+  });
+
+  function handleFile(f) {
+    const allowed = ['application/pdf', 'image/jpeg', 'image/png'];
+    const err = document.getElementById('dropError');
+    if (!allowed.includes(f.type)) {
+      err.textContent = 'Unsupported type: ' + (f.type || f.name);
+      err.classList.remove('hidden');
+      return;
+    }
+    if (f.size > 50 * 1024 * 1024) {
+      err.textContent = 'File exceeds 50 MB';
+      err.classList.remove('hidden');
+      return;
+    }
+    err.classList.add('hidden');
+    selectedFile = f;
+
+    document.getElementById('fileLabel').textContent =
+      f.name + ' (' + (f.size / 1024).toFixed(0) + ' KB)';
+    document.getElementById('fileLabel').classList.remove('hidden');
+    document.getElementById('redactBtn').disabled = false;
+
+    // Show original preview
+    resetResult();
+    showOriginal(f);
+  }
+
+  function showOriginal(f) {
+    const pane = document.getElementById('originalPane');
+    const url = URL.createObjectURL(f);
+    if (f.type === 'application/pdf') {
+      pane.innerHTML = `<iframe src="${url}" class="w-full rounded-lg" style="height:500px; border:none;"></iframe>`;
+    } else {
+      pane.innerHTML = `<img src="${url}" class="w-full rounded-lg" alt="original" />`;
+    }
+  }
+
+  function resetResult() {
+    redactedPages = [];
+    originalPages = [];
+    currentPage = 0;
+    fileId = null;
+    document.getElementById('summary').classList.add('hidden');
+    document.getElementById('downloadBtn').classList.add('hidden');
+    document.getElementById('pageNav').classList.add('hidden');
+    document.getElementById('apiError').classList.add('hidden');
+    document.getElementById('redactedPane').innerHTML =
+      '<span class="text-gray-600 text-sm">Result appears here</span>';
+  }
+
+  async function runRedact() {
+    if (!selectedFile) return;
+    const btn = document.getElementById('redactBtn');
+    btn.disabled = true;
+    btn.textContent = 'Redacting…';
+    document.getElementById('apiError').classList.add('hidden');
+    document.getElementById('summary').classList.add('hidden');
+    document.getElementById('downloadBtn').classList.add('hidden');
+
+    // Loading skeleton in redacted pane
+    document.getElementById('redactedPane').innerHTML =
+      '<div class="skeleton w-full rounded-lg" style="height:400px;"></div>';
+
+    const form = new FormData();
+    form.append('file', selectedFile);
+    form.append('enabled_types', enabledTypes.join(','));
+    form.append('redact_mode', redactMode);
+
+    try {
+      const res = await fetch('/redact', { method: 'POST', body: form });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'HTTP ' + res.status);
+
+      redactedPages = data.page_previews || [];
+      fileId = data.output_file_id;
+      currentPage = 0;
+
+      renderRedactedPage();
+      showSummary(data.summary, data.verification);
+
+      const dlBtn = document.getElementById('downloadBtn');
+      dlBtn.href = '/download/' + fileId;
+      dlBtn.classList.remove('hidden');
+
+      if (redactedPages.length > 1) {
+        document.getElementById('pageNav').classList.remove('hidden');
+        updatePageNav();
+      }
+    } catch (e) {
+      document.getElementById('apiError').textContent = 'Error: ' + e.message;
+      document.getElementById('apiError').classList.remove('hidden');
+      document.getElementById('redactedPane').innerHTML =
+        '<span class="text-red-400 text-sm">Failed</span>';
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Redact';
+    }
+  }
+
+  function renderRedactedPage() {
+    const pane = document.getElementById('redactedPane');
+    if (!redactedPages[currentPage]) {
+      pane.innerHTML = '<span class="text-gray-600 text-sm">No preview</span>';
+      return;
+    }
+    pane.innerHTML = `<img src="data:image/png;base64,${redactedPages[currentPage]}"
+      class="w-full rounded-lg" alt="Redacted page ${currentPage + 1}" />`;
+  }
+
+  function changePage(delta) {
+    currentPage = Math.max(0, Math.min(redactedPages.length - 1, currentPage + delta));
+    renderRedactedPage();
+    updatePageNav();
+  }
+
+  function updatePageNav() {
+    document.getElementById('pageLabel').textContent =
+      (currentPage + 1) + ' / ' + redactedPages.length;
+    document.getElementById('prevBtn').disabled = currentPage === 0;
+    document.getElementById('nextBtn').disabled = currentPage === redactedPages.length - 1;
+  }
+
+  function showSummary(summary, verification) {
+    const LABELS = { faces:'face', names:'name', id_numbers:'ID number', dates:'date', addresses:'address' };
+    const parts = Object.entries(LABELS)
+      .filter(([k]) => summary[k] > 0)
+      .map(([k, l]) => `${summary[k]} ${l}${summary[k] !== 1 ? 's' : ''}`);
+
+    document.getElementById('summaryText').innerHTML =
+      parts.length
+        ? '<span class="text-green-400 font-semibold">✓</span> ' + parts.join(' · ') + ' masked'
+        : 'No PII detected.';
+
+    const vp = document.getElementById('verifyText');
+    if (verification?.verdict === 'CLEAN') {
+      vp.textContent = '✓ Verified — redacted data is unrecoverable';
+      vp.className = 'text-sm font-medium text-green-400';
+    } else if (verification?.verdict === 'LEAK_DETECTED') {
+      vp.textContent = '⚠ Leak detected — some redacted text is still extractable';
+      vp.className = 'text-sm font-medium text-red-400';
+    } else {
+      vp.textContent = '';
+    }
+
+    document.getElementById('summary').classList.remove('hidden');
+  }
+</script>
+</body>
+</html>
