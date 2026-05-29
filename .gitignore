@@ -1,0 +1,23 @@
+CLAUDE.md
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.env
+*.onnx
+venv/
+.venv/
+
+# Node
+node_modules/
+dist/
+
+# Temp / uploads
+sample_docs/
+/tmp/
+
+# OS
+desktop.ini
+.DS_Store
